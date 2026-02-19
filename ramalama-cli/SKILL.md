@@ -35,13 +35,38 @@ Use when an alternative AI agent is better suited to a task. For example, workin
 Use this skill to execute `ramalama` tasks in a consistent, low-risk workflow.
 Prefer local discovery (`--help`, local config files, existing project scripts) before making assumptions about flags or runtime defaults.
 
-### RamaLama vs Ollama (important distinction)
+Prefer `ramalama` when tasks need:
+- flexible model sourcing (`hf://`, `oci://`, `rlcr://`, `url://`)
+- containerized local inference with runtime/network/device controls
+- RAG data packaging and serving
+- benchmark/perplexity evaluation
+- model conversion and registry push/pull flows
 
-Use `ramalama` when you need model source flexibility (for example, direct Hugging Face GGUF references via `hf://...`, OCI references, RLCR, or URL/registry sources).
+## Preflight
 
-Use `ollama` when models are already in the Ollama library or already packaged for Ollama workflows.
+Run these checks before first invocation in a session:
 
-If a user specifically asks to run a model directly from Hugging Face, prefer `ramalama` first.
+```bash
+ramalama version
+podman info >/dev/null 2>&1 || docker info >/dev/null 2>&1
+ramalama run --help
+```
+
+If serving on default port, verify availability:
+
+```bash
+lsof -i :8080
+```
+
+## Decision Matrix
+
+- One-shot inference: `ramalama run <model> "<prompt>"`
+- Interactive chat loop: `ramalama run <model>`
+- Serve OpenAI-compatible endpoint: `ramalama serve <model>`
+- Query an existing endpoint: `ramalama chat --url <url> "<prompt>"`
+- Build knowledge bundle from files/URLs: `ramalama rag <paths...> <destination>`
+- Evaluate model performance/quality: `ramalama bench <model>` and `ramalama perplexity <model>`
+- Inspect/source lifecycle operations: `inspect`, `pull`, `push`, `convert`, `list`, `rm`
 
 ## Usage
 
@@ -58,108 +83,80 @@ Apply global options before the subcommand when needed:
 ramalama [--debug|--quiet] [--dryrun] [--engine podman|docker] [--nocontainer] [--runtime llama.cpp|vllm|mlx] [--store <path>] <subcommand> ...
 ```
 
-Use available subcommands:
-
-- `bench` (`benchmark`): benchmark a model
-- `benchmarks`: manage and view benchmark results
-- `chat`: chat against a REST API URL
-- `containers` (`ps`): list running RamaLama containers
-- `convert`: convert a local model to an OCI image
-- `help`: show command help
-- `info`: inspect local runtime/setup information
-- `inspect`: inspect a model
-- `list` (`ls`): list downloaded models
-- `login`: authenticate to a remote registry
-- `logout`: remove registry auth
-- `perplexity`: calculate model perplexity
-- `pull`: pull a model from a registry
-- `push`: push a model to a registry
-- `rag`: build/convert RAG data into an OCI image
-- `rm`: remove a local model
-- `run`: run a model as a chatbot
-- `serve`: serve a model as a REST API
-- `stop`: stop a running model container
-- `version`: print RamaLama version
-- `daemon`: daemon operations
-
 Use command-level help before invoking unknown flags:
 
 ```bash
 ramalama <subcommand> --help
 ```
 
-### Serve a local model
+## Known-Good Recipes
+
+### 1) One-shot run
 
 ```bash
-ramalama serve <prefix>://model-name
+ramalama run granite3.3:2b "Summarize this in 3 bullets: <text>"
 ```
 
-Available prefixes include
-* hf: HuggingFace website
-* ollama: Ollama model library
-* rlcr: the RamaLama container registry (rlcr.io - model list at https://app.ramalama.com/explore/registry/models)
-* url: a remote url
-* oci: any oci compatible image or artifact reference
+### 2) Detached service + API call
 
+```bash
+ramalama serve -d granite3.3:2b
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"granite3.3:2b","messages":[{"role":"user","content":"Hello"}]}'
+```
 
-Run a model from huggingface:
+### 3) Direct Hugging Face source
 
 ```bash
 ramalama serve hf://unsloth/gemma-3-270m-it-GGUF
 ```
 
-A custom runtime image can be identified with the --image argument.
-This can be used to run the model with special hardware capabilities like cuda, ROCm, vulkan, and more.
+### 4) RAG package then query
 
 ```bash
-ramalama serve --image rlcr.io/ramalama/llamacpp-cuda-distroless:latest rlcr://gemma3-270m:latest  
+ramalama rag ./docs my-rag
+ramalama run --rag my-rag granite3.3:2b "What are the auth requirements?"
 ```
 
-You can specify different model runtimes to use including llama.cpp, vllm, and mlx (if mlx_lm.server is installed)
+### 5) Benchmark and list benchmark history
 
 ```bash
-ramalama --runtime vllm serve rlcr://gemma3-270m:latest
+ramalama bench granite3.3:2b
+ramalama benchmarks list
 ```
 
-For mac you can run the model natively on metal with llama.cpp using the --nocontainer flag
+## Reliability Defaults
+
+For agent automation, prefer explicit and deterministic flags:
 
 ```bash
-ramalama --nocontainer serve gpt-oss:20b
+ramalama --engine podman run -c 4096 --pull missing granite3.3:2b "<prompt>"
 ```
 
-Start the model in detached model
+Recommended defaults:
+- set `--engine` explicitly when environment is mixed
+- start with smaller `-c/--ctx-size` on constrained hosts
+- use `--pull missing` for faster repeat runs
+- use one-shot non-interactive invocation for scripts
 
-```bash
-ramalama serve -d gpt-oss:20b
-```
+## Troubleshooting
 
-### Communicate with models
+- Docker socket unavailable:
+  - verify Docker is running, or use `--engine podman`
+- Podman socket unavailable:
+  - check `podman machine list` and start machine if needed
+- `timed out` during startup:
+  - inspect container logs: `podman logs <container>`
+  - reduce context (`-c 4096`) and retry
+- memory allocation failure:
+  - use a smaller model and/or lower context size
+- port conflict on 8080:
+  - choose alternate port via `-p <port>`
 
-Once the model is serving you can communicate with it over a standard openai completions endpoint.
-By default `serve` will start serving on port 8080.
-You can use standard curl to talk to the model
+## Notes
 
-```bash
-curl http://localhost:8080/v1/chat/completions \
-   -H "Content-Type: application/json" \
-   -d '{
-     "model": "gpt-oss-20b",
-     "messages": [{"role": "user", "content": "Hello!"}]
-   }' | jq '.choices[0].message'
-```
-
-You can also chat with ramalama
-
-```bash
-ramalama chat "hello model"
--> Hello!
-```
-
-If port 8080 is occupied serve will start on another port.
-You can specify which url to connect with using
-
-```bash
-ramalama chat --url http://localhost:8174/v1/ "hello what model are you"
-```
-
+- `serve` exposes an OpenAI-compatible endpoint for external clients.
+- Prefer JSON output flags where available (`list --json`, `inspect --json`) for robust parsing in automation.
+- Use `ramalama chat --url <endpoint>` when the model is already served elsewhere.
 
