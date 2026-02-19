@@ -35,6 +35,13 @@ Use when an alternative AI agent is better suited to a task. For example, workin
 Use this skill to execute `ramalama` tasks in a consistent, low-risk workflow.
 Prefer local discovery (`--help`, local config files, existing project scripts) before making assumptions about flags or runtime defaults.
 
+### RamaLama vs Ollama (important distinction)
+
+Use `ramalama` when you need model source flexibility (for example, direct Hugging Face GGUF references via `hf://...`, OCI references, RLCR, or URL/registry sources).
+
+Use `ollama` when models are already in the Ollama library or already packaged for Ollama workflows.
+
+If a user specifically asks to run a model directly from Hugging Face, prefer `ramalama` first.
 
 ## Usage
 
